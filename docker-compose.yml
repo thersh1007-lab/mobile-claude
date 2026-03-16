@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  mobile-claude:
+    build: .
+    ports:
+      - "3456:3456"   # HTTP + WS
+      - "3556:3556"   # HTTPS + WSS
+    volumes:
+      - ./server/data:/app/server/data       # persistent conversations
+      - ./server/logs:/app/server/logs       # audit logs
+      - ./server/certs:/app/server/certs     # HTTPS certs
+      - ${WORKSPACE_ROOT:-.}:/workspace      # your code (mount your project here)
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - AUTH_TOKEN=${AUTH_TOKEN:-change-this}
+      - WORKSPACE_ROOT=/workspace
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - PORT=3456
+    restart: unless-stopped

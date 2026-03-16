@@ -42,6 +42,23 @@ npm start
 
 Open the URL on any device — if no API key is configured, a setup wizard appears in the browser.
 
+## npx (One Command)
+
+```bash
+npx mobile-claude
+```
+
+## Docker
+
+```bash
+git clone https://github.com/thersh1007-lab/mobile-claude.git
+cd mobile-claude
+echo "ANTHROPIC_API_KEY=sk-ant-your-key-here" > .env
+docker-compose up
+```
+
+Open `http://localhost:3456` on your phone.
+
 ## Prerequisites
 
 - **Node.js 18+**
