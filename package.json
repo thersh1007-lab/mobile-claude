@@ -1,0 +1,23 @@
+{
+  "name": "mobile-claude",
+  "version": "1.5.0",
+  "description": "Chat with Claude AI from your phone with full dev environment access",
+  "keywords": ["claude", "ai", "mobile", "pwa", "terminal", "anthropic", "claude-code"],
+  "author": "ATJ Digital",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thersh1007-lab/mobile-claude"
+  },
+  "scripts": {
+    "install:server": "cd server && npm install",
+    "install:desktop": "cd desktop && npm install",
+    "setup": "cd server && npm run setup",
+    "build": "cd server && npm run build",
+    "start": "cd server && npm start",
+    "test": "cd server && npm test",
+    "dev": "cd server && npm run dev",
+    "desktop": "cd desktop && npx electron .",
+    "postinstall": "cd server && npm install"
+  }
+}

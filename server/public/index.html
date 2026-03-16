@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Claude">
+<meta name="theme-color" content="#1a1a2e">
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon.svg">
+<title>Mobile Claude</title>
+<script>
+// Force service worker update on version change
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations().then(function(regs) {
+    var needsRefresh = false;
+    regs.forEach(function(reg) {
+      if (reg.active && reg.active.scriptURL.includes('sw.js')) {
+        reg.update();
+      }
+    });
+  });
+  // Clear old caches
+  if ('caches' in window) {
+    caches.keys().then(function(names) {
+      names.forEach(function(name) {
+        if (name !== 'mobile-claude-v4') caches.delete(name);
+      });
+    });
+  }
+}
+</script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css">
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div id="app">
+  <div id="status-bar">
+    <!-- Row 1: Status + workspace -->
+    <div id="status-dot"></div>
+    <span id="status-text">disconnected</span>
+    <select id="workspace-select" disabled>
+      <option value="">workspace...</option>
+    </select>
+    <button class="bar-btn" id="mode-toggle" title="Switch mode: Direct API / Claude Code">API</button>
+    <button class="bar-btn" id="settings-btn" title="Settings">⚙</button>
+    <!-- Row 2: Actions -->
+    <div class="row-break"></div>
+    <label id="auto-approve-toggle" title="Auto-approve read-only tools">
+      <input type="checkbox" id="auto-approve-cb">
+      <span>Auto</span>
+    </label>
+    <div class="zoom-controls">
+      <button class="zoom-btn" id="zoom-out" title="Smaller">-</button>
+      <button class="zoom-btn" id="zoom-in" title="Larger">+</button>
+    </div>
+    <button class="bar-btn" id="files-btn" title="Browse files" style="font-size:14px">📂</button>
+    <button class="bar-btn" id="upload-btn" title="Upload file">📎</button>
+    <button class="bar-btn" id="history-btn" title="Chat history" style="font-size:14px" onclick="if(typeof loadHistory==='function') loadHistory();">📋</button>
+    <button class="bar-btn" id="sessions-btn" title="Import Claude Code session" style="font-size:13px" onclick="document.getElementById('sessions-modal').classList.add('open'); if(typeof loadSessions==='function') loadSessions();">💬</button>
+    <button class="bar-btn" id="new-chat-btn" title="New chat">+</button>
+    <button class="bar-btn" id="features-btn" title="Features" style="font-size:16px;font-weight:700">?</button>
+    <input type="file" id="file-input" style="display:none" multiple>
+  </div>
+
+  <!-- Quick actions -->
+  <div id="quick-actions">
+    <button class="quick-btn" id="voice-memo-btn" style="background:var(--accent-gold);color:var(--bg);border-color:var(--accent-gold)">📝 Voice Memo</button>
+    <button class="quick-btn" data-cmd="summarize this project - what does it do, what are the key files?">Summarize</button>
+    <button class="quick-btn" data-cmd="list the files in this directory">Files</button>
+    <button class="quick-btn" data-cmd="what changed recently? show git status and recent commits">Changes</button>
+    <button class="quick-btn" data-cmd="run npm test">Tests</button>
+  </div>
+
+  <div id="messages"></div>
+  <button id="scroll-fab">↓</button>
+
+  <div id="input-bar">
+    <button class="input-btn" id="mic-btn" title="Voice input">🎤</button>
+    <textarea id="msg-input" placeholder="Message Claude..." rows="1"></textarea>
+    <button class="input-btn" id="send-btn" disabled>↑</button>
+  </div>
+</div>
+
+<div id="settings-modal">
+  <h2>Settings</h2>
+
+  <div class="settings-section">
+    <h3>Connection</h3>
+    <label>Server URL</label>
+    <input id="set-url" type="text" placeholder="ws://YOUR_IP:3456">
+    <div class="hint">Your computer's local IP + port 3456</div>
+    <label>Auth Token</label>
+    <input id="set-token" type="password" placeholder="your-secret-token">
+    <div class="hint">Must match AUTH_TOKEN in server .env</div>
+  </div>
+
+  <div class="settings-section">
+    <h3>Tool Approval</h3>
+    <div class="settings-toggle">
+      <span>Auto-approve read_file</span>
+      <input type="checkbox" id="set-auto-read" checked>
+    </div>
+    <div class="settings-toggle">
+      <span>Auto-approve list_directory</span>
+      <input type="checkbox" id="set-auto-list" checked>
+    </div>
+    <div class="settings-toggle">
+      <span>Auto-approve search_files</span>
+      <input type="checkbox" id="set-auto-search" checked>
+    </div>
+    <div class="hint">Auto-approved tools run without asking. Write/edit/command always ask.</div>
+  </div>
+
+  <div class="settings-section">
+    <h3>Notifications</h3>
+    <div class="settings-toggle">
+      <span>Sound on approval needed</span>
+      <input type="checkbox" id="set-sound-approval" checked>
+    </div>
+    <div class="settings-toggle">
+      <span>Sound on response complete</span>
+      <input type="checkbox" id="set-sound-done" checked>
+    </div>
+    <div class="settings-toggle">
+      <span>Vibrate on events</span>
+      <input type="checkbox" id="set-vibrate" checked>
+    </div>
+  </div>
+
+  <div class="settings-section">
+    <h3>Maintenance</h3>
+    <button id="clear-cache-btn" style="background:var(--bg-card);color:var(--text);border:1px solid var(--border);padding:8px 16px;border-radius:6px;font-size:13px;cursor:pointer;width:100%">Clear Cache & Reload</button>
+    <div class="hint">Fixes stale UI. Clears service worker and cached files.</div>
+  </div>
+
+  <button id="save-settings">Save & Connect</button>
+  <button id="back-btn">Back to Chat</button>
+</div>
+
+<div id="features-modal">
+  <h2>Features</h2>
+  <div class="features-subtitle">Everything Mobile Claude can do</div>
+
+  <div class="feature-section">
+    <h3><span class="section-icon">💬</span> Chat & AI</h3>
+    <div class="feature-item">
+      <span class="feature-icon">🤖</span>
+      <div class="feature-text"><strong>Claude AI</strong><span>Send messages to Claude from your phone — full dev assistant</span></div>
+    </div>
+    <div class="feature-item">
+      <span class="feature-icon">📝</span>
+      <div class="feature-text"><strong>Markdown Rendering</strong><span>Responses render with formatted text, lists, headings, and syntax-highlighted code blocks</span></div>
+    </div>
+    <div class="feature-item">
+      <span class="feature-icon">📋</span>
+      <div class="feature-text"><strong>Copy Code</strong><span>Every code block has a Copy button — tap to copy to clipboard</span></div>
+    </div>
+    <div class="feature-item">
+      <span class="feature-icon">⚡</span>
+      <div class="feature-text"><strong>Streaming Responses</strong><span>Text appears in real-time as Claude types — no waiting for full response</span></div>
+    </div>
+    <div class="feature-item">
+      <span class="feature-icon">➕</span>
+      <div class="feature-text"><strong>New Chat</strong><span>Tap the + button to clear conversation and start fresh</span></div>
+    </div>
+  </div>
+
+  <div class="feature-section">
+    <h3><span class="section-icon">🎤</span> Voice Input</h3>
+    <div class="feature-item">
+      <span class="feature-icon">🎙️</span>
+      <div class="feature-text"><strong>Mic Button</strong><span>Tap to start voice dictation — speaks into the text field so you can review before sending</span></div>
+    </div>
+    <div class="feature-item">
+      <span class="feature-icon">⏹️</span>
+      <div class="feature-text"><strong>Stop Recording</strong><span>Tap the mic again to stop — button glows red while recording</span></div>
+    </div>
+    <div class="feature-item">
+      <span class="feature-icon">💬</span>
+      <div class="feature-text"><strong>Live Transcription</strong><span>Shows what it hears in the input placeholder as you speak</span></div>
+    </div>
+  </div>
+
+  <div class="feature-section">
+    <h3><span class="section-icon">🔗</span> Claude Code Bridge</h3>
+    <div class="feature-item">
+      <span class="feature-icon">🟣</span>
+      <div class="feature-text"><strong>CC Mode</strong><span>Tap the API/CC button in status bar to switch to Claude Code Bridge — uses the full Claude Code CLI with all tools, memory, and CLAUDE.md</span></div>
+    </div>
+    <div class="feature-item">
+      <span class="feature-icon">🔧</span>
+      <div class="feature-text"><strong>Full Tool Access</strong><span>Read, Edit, Write, Bash, Grep, Glob, Agent — all Claude Code tools available, not just the 6 basic ones</span></div>
+    </div>
+    <div class="feature-item">
+      <span class="feature-icon">🧠</span>
+      <div class="feature-text"><strong>Session Memory</strong><span>Claude Code remembers CLAUDE.md files, project context, and auto-memory across messages</span></div>
+    </div>
+    <div class="feature-item">
+      <span class="feature-icon">👀</span>
+      <div class="feature-text"><strong>Tool Visibility</strong><span>See all tool calls in real-time with purple CC badges — Claude Code handles execution internally</span></div>
+    </div>
+  </div>
+
+  <div class="feature-section">
+    <h3><span class="section-icon">⚡</span> Quick Actions</h3>
+    <div class="feature-item">
+      <span class="feature-icon">👆</span>
+      <div class="feature-text"><strong>Swipeable Command Row</strong><span>Scroll horizontally through preset commands below the status bar</span></div>
+    </div>
+    <div class="feature-item">
+      <span class="feature-icon">🏷️</span>
+      <div class="feature-text"><strong>Preset Commands</strong><span>git status, git diff, git log, ls, branch info, run tests, build, check errors, summarize</span></div>
+    </div>
+    <div class="feature-item">
+      <span class="feature-icon">⚡</span>
+      <div class="feature-text"><strong>Instant Send</strong><span>Tap any quick action to send immediately — no typing needed</span></div>
+    </div>
+  </div>
+
+  <div class="feature-section">
+    <h3><span class="section-icon">📂</span> Workspace Switcher</h3>
+    <div class="feature-item">
+      <span class="feature-icon">📁</span>
+      <div class="feature-text"><strong>Repo Dropdown</strong><span>Dropdown in top bar lists all repos from ~/Documents/github/</span></div>
+    </div>
+    <div class="feature-item">
+      <span class="feature-icon">🔄</span>
+      <div class="feature-text"><strong>Switch Context</strong><span>Pick a workspace and Claude works in that directory. Conversation resets on change.</span></div>
+    </div>
+    <div class="feature-item">
+      <span class="feature-icon">💾</span>
+      <div class="feature-text"><strong>Remembers Selection</strong><span>Your last workspace is saved and restored on next visit</span></div>
+    </div>
+  </div>
+
+  <div class="feature-section">
+    <h3><span class="section-icon">📎</span> File Upload</h3>
+    <div class="feature-item">
+      <span class="feature-icon">📎</span>
+      <div class="feature-text"><strong>Upload Files</strong><span>Tap the clip icon to upload screenshots, docs, images — anything from your phone</span></div>
+    </div>
+    <div class="feature-item">
+      <span class="feature-icon">💾</span>
+      <div class="feature-text"><strong>Saved to Workspace</strong><span>Files are saved to the uploads/ folder inside your current workspace</span></div>
+    </div>
+  </div>
+
+  <div class="feature-section">
+    <h3><span class="section-icon">🔐</span> Tool Approval System</h3>
+    <div class="feature-item">
+      <span class="feature-icon">🃏</span>
+      <div class="feature-text"><strong>Approval Cards</strong><span>Claude's tool calls (read, write, edit, run command) appear as cards you can approve or deny</span></div>
+    </div>
+    <div class="feature-item">
+      <span class="feature-icon">✅</span>
+      <div class="feature-text"><strong>Auto-Approve</strong><span>Toggle auto-approve for read-only tools (read_file, list_directory, search_files) so they run instantly</span></div>
+    </div>
+    <div class="feature-item">
+      <span class="feature-icon">⚙️</span>
+      <div class="feature-text"><strong>Per-Tool Config</strong><span>Configure which tools auto-approve in Settings — write/edit/command always require manual approval</span></div>
+    </div>
+  </div>
+
+  <div class="feature-section">
+    <h3><span class="section-icon">🔔</span> Notifications</h3>
+    <div class="feature-item">
+      <span class="feature-icon">🔊</span>
+      <div class="feature-text"><strong>Approval Alert</strong><span>Two-tone rising chime when a tool needs your approval</span></div>
+    </div>
+    <div class="feature-item">
+      <span class="feature-icon">🎵</span>
+      <div class="feature-text"><strong>Done Sound</strong><span>Descending chime when Claude finishes responding</span></div>
+    </div>
+    <div class="feature-item">
+      <span class="feature-icon">🔇</span>
+      <div class="feature-text"><strong>Error Buzz</strong><span>Low buzz sound on failures</span></div>
+    </div>
+    <div class="feature-item">
+      <span class="feature-icon">📳</span>
+      <div class="feature-text"><strong>Haptic Vibration</strong><span>Phone vibrates on approval requests, button taps, and events</span></div>
+    </div>
+    <div class="feature-item">
+      <span class="feature-icon">⚙️</span>
+      <div class="feature-text"><strong>All Toggleable</strong><span>Enable or disable each notification type in Settings</span></div>
+    </div>
+  </div>
+
+  <div class="feature-section">
+    <h3><span class="section-icon">🛠️</span> Other</h3>
+    <div class="feature-item">
+      <span class="feature-icon">⬇️</span>
+      <div class="feature-text"><strong>Scroll to Bottom</strong><span>Floating arrow button appears when you scroll up — tap to jump back down</span></div>
+    </div>
+    <div class="feature-item">
+      <span class="feature-icon">🔗</span>
+      <div class="feature-text"><strong>Auto-Reconnect</strong><span>If connection drops, automatically retries every 5 seconds</span></div>
+    </div>
+    <div class="feature-item">
+      <span class="feature-icon">⚙️</span>
+      <div class="feature-text"><strong>Settings</strong><span>Configure server URL, auth token, tool approval preferences, and notification sounds</span></div>
+    </div>
+  </div>
+
+  <button id="features-back-btn">Back to Chat</button>
+</div>
+
+<div id="voice-memo-modal">
+  <h2>📝 Voice Memo → Blog Topic</h2>
+  <p class="vm-hint">Describe a blog topic idea. Say what to cover, the angle, target audience, and keywords if you have them. AI will expand it into a full topic brief for the SEO pipeline.</p>
+  <div id="vm-status">Tap Record to start</div>
+  <div id="vm-transcript" contenteditable="true"></div>
+  <div class="vm-controls">
+    <button class="vm-btn" id="vm-cancel-btn">Cancel</button>
+    <button class="vm-btn" id="vm-record-btn">🎤 Record</button>
+    <button class="vm-btn" id="vm-send-btn" disabled>📤 Create Topic</button>
+  </div>
+</div>
+
+<!-- History modal -->
+<div id="history-modal" class="modal">
+  <div class="modal-header">
+    <button class="back-btn" id="history-back-btn">←</button>
+    <span>Chat History</span>
+  </div>
+  <div class="modal-body" style="padding:12px">
+    <div id="history-list" style="display:flex;flex-direction:column;gap:8px">
+      <div style="color:var(--text-muted);text-align:center;padding:20px">Loading...</div>
+    </div>
+  </div>
+</div>
+
+<!-- Sessions modal -->
+<div id="sessions-modal" class="modal">
+  <div class="modal-header">
+    <button class="back-btn" id="sessions-back-btn">←</button>
+    <span>Claude Code Sessions</span>
+  </div>
+  <div class="modal-body" style="padding:12px">
+    <p style="color:var(--text-muted);font-size:13px;margin-bottom:8px">Import a conversation from Claude Code to continue it here.</p>
+    <div style="margin-bottom:10px">
+      <select id="sessions-filter" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;width:100%">
+        <option value="recent" selected>Recent (today)</option>
+        <option value="current">Current workspace only</option>
+        <option value="all">All projects (209+)</option>
+      </select>
+    </div>
+    <div id="sessions-list" style="display:flex;flex-direction:column;gap:8px">
+      <div style="color:var(--text-muted);text-align:center;padding:20px">Loading sessions...</div>
+    </div>
+  </div>
+</div>
+
+<!-- Onboarding modal (first-run setup) -->
+<div id="onboarding-modal">
+  <div class="modal-body" style="padding:24px;max-width:400px;margin:0 auto;width:100%">
+    <h2 style="color:var(--accent-gold);text-align:center;margin-bottom:8px">Mobile Claude</h2>
+    <p style="color:var(--text-muted);text-align:center;margin-bottom:24px;font-size:13px">First-time setup — takes 30 seconds</p>
+
+    <div id="setup-step-1">
+      <label>Anthropic API Key</label>
+      <input id="setup-api-key" type="password" placeholder="sk-ant-...">
+      <div class="hint">Get yours at console.anthropic.com</div>
+
+      <label>OpenAI Key (optional, for voice)</label>
+      <input id="setup-openai-key" type="password" placeholder="sk-... (Enter to skip)">
+
+      <button id="setup-go-btn">Set Up</button>
+      <div id="setup-status" style="color:var(--text-muted);text-align:center;margin-top:12px;font-size:13px"></div>
+    </div>
+
+    <div id="setup-step-2" style="display:none">
+      <div style="text-align:center;color:var(--green);font-size:18px;margin-bottom:16px">Ready!</div>
+      <div style="background:var(--bg-card);padding:12px;border-radius:6px;margin-bottom:12px">
+        <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px">Auth Token</div>
+        <div id="setup-token-display" style="font-family:monospace;font-size:13px;word-break:break-all;margin-top:4px;color:var(--text)"></div>
+      </div>
+      <div class="hint" style="margin-bottom:16px">Save this token — you will need it to connect from your phone.</div>
+      <button id="setup-copy-btn">Copy Token</button>
+      <button id="setup-connect-btn">Connect Now</button>
+    </div>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

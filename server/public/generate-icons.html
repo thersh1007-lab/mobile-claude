@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html><head><title>Generate PWA Icons</title></head>
+<body style="background:#333;color:#fff;font-family:sans-serif;padding:20px">
+<h2>PWA Icon Generator</h2>
+<p>Right-click each canvas and "Save image as..." to the public/ folder</p>
+<div style="display:flex;gap:20px;margin-top:20px">
+  <div>
+    <canvas id="c192" width="192" height="192"></canvas>
+    <p>icon-192.png</p>
+  </div>
+  <div>
+    <canvas id="c512" width="512" height="512"></canvas>
+    <p>icon-512.png</p>
+  </div>
+</div>
+<script>
+function drawIcon(canvas) {
+  const s = canvas.width;
+  const ctx = canvas.getContext('2d');
+  // Background
+  ctx.fillStyle = '#0d1117';
+  ctx.fillRect(0, 0, s, s);
+  // Terminal bracket >_
+  ctx.fillStyle = '#58a6ff';
+  ctx.font = `bold ${s * 0.45}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('>_', s * 0.5, s * 0.48);
+  // "Claude" text
+  ctx.fillStyle = '#8b949e';
+  ctx.font = `${s * 0.1}px -apple-system, sans-serif`;
+  ctx.fillText('Claude', s * 0.5, s * 0.78);
+}
+drawIcon(document.getElementById('c192'));
+drawIcon(document.getElementById('c512'));
+</script>
+</body>
+</html>

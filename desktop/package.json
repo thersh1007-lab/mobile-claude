@@ -1,0 +1,26 @@
+{
+  "name": "mobile-claude-desktop",
+  "version": "1.0.0",
+  "description": "Mobile Claude — Desktop App",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.atjdigital.mobile-claude",
+    "productName": "Mobile Claude",
+    "win": {
+      "target": "portable",
+      "icon": "../server/public/icon.svg"
+    },
+    "files": [
+      "main.js",
+      "preload.js"
+    ]
+  }
+}
