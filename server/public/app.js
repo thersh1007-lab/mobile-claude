@@ -1,3 +1,6 @@
+// App version — must match server. If mismatch, auto-reload.
+const CLIENT_VERSION = '1.5.1';
+
 // Configure marked
 marked.setOptions({
   breaks: true,
@@ -956,8 +959,23 @@ function renderDiff(oldText, newText) {
 // ── Project Dashboard ──
 async function showDashboard() {
   try {
-    // Use page origin (same server serves both the page and the API)
+    // Version check — auto-reload if client is stale
     const httpUrl = location.origin;
+    try {
+      const healthResp = await fetch(`${httpUrl}/health`);
+      const health = await healthResp.json();
+      if (health.version && health.version !== CLIENT_VERSION) {
+        console.log('Version mismatch: client=' + CLIENT_VERSION + ' server=' + health.version + ' — reloading');
+        // Clear SW cache and reload
+        if ('caches' in window) {
+          const keys = await caches.keys();
+          for (const k of keys) await caches.delete(k);
+        }
+        window.location.reload(true);
+        return;
+      }
+    } catch(e) { /* offline or health failed, continue */ }
+
     const resp = await fetch(`${httpUrl}/api/dashboard?token=${encodeURIComponent(authToken)}`);
     if (!resp.ok) return;
     const data = await resp.json();

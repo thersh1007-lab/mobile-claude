@@ -1,6 +1,6 @@
 {
   "name": "mobile-claude",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "Chat with Claude AI from your phone with full dev environment access",
   "keywords": ["claude", "anthropic", "ai", "mobile", "pwa", "terminal", "claude-code", "developer-tools"],
   "author": "ATJ Digital",

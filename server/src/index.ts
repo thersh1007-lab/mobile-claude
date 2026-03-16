@@ -131,9 +131,11 @@ app.use(express.static(path.join(__dirname, '..', 'public'), {
   }
 }));
 
+const APP_VERSION = '1.5.1';
+
 // Health check endpoint
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime() });
+  res.json({ status: 'ok', uptime: process.uptime(), version: APP_VERSION });
 });
 
 // Force cache clear — visit /clear-cache on the phone to nuke old service worker

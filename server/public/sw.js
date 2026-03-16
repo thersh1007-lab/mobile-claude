@@ -1,9 +1,10 @@
-const CACHE_NAME = 'mobile-claude-v4';
+const CACHE_NAME = 'mobile-claude-v5';
 const PRECACHE = [
   '/',
   '/styles.css',
   '/app.js',
   '/manifest.json',
+  '/icon.svg',
 ];
 
 self.addEventListener('install', (event) => {
@@ -14,6 +15,7 @@ self.addEventListener('install', (event) => {
 });
 
 self.addEventListener('activate', (event) => {
+  // Delete ALL old caches on activate
   event.waitUntil(
     caches.keys().then((keys) =>
       Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
@@ -23,28 +25,18 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  // Network-first for the main page (always get latest)
-  if (event.request.mode === 'navigate') {
-    event.respondWith(
-      fetch(event.request).catch(() => caches.match('/'))
-    );
-    return;
-  }
-  // Network-first for JS/CSS (always get latest code), cache-first for other assets
-  const url = new URL(event.request.url);
-  if (url.pathname.endsWith('.js') || url.pathname.endsWith('.css') || url.pathname.endsWith('.html')) {
-    event.respondWith(
-      fetch(event.request).then((response) => {
-        const clone = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-        return response;
-      }).catch(() => caches.match(event.request))
-    );
-    return;
-  }
-  // Cache-first for images, icons, fonts, etc.
+  // Network-first for EVERYTHING — cache is offline fallback only
   event.respondWith(
-    caches.match(event.request).then((cached) => cached || fetch(event.request))
+    fetch(event.request)
+      .then((response) => {
+        // Cache successful responses for offline use
+        if (response.ok) {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        }
+        return response;
+      })
+      .catch(() => caches.match(event.request))
   );
 });
 

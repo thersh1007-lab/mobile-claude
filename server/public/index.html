@@ -26,7 +26,7 @@ if ('serviceWorker' in navigator) {
   if ('caches' in window) {
     caches.keys().then(function(names) {
       names.forEach(function(name) {
-        if (name !== 'mobile-claude-v4') caches.delete(name);
+        if (name !== 'mobile-claude-v5') caches.delete(name);
       });
     });
   }
