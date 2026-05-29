@@ -23,7 +23,7 @@ Mobile Claude is a self-hosted mobile web app for chatting with Claude AI from y
 3. **Test bridge changes from CLI first**: `claude -p "test prompt" --output-format json --dangerously-skip-permissions --max-turns 3`
 4. **Never put the prompt on the command line** — Windows shell escaping breaks bridge mode. The bridge spawns `claude -p` and feeds the prompt via **stdin** (then `stdin.end()`), so the prompt never touches the command line. `shell: true` is used only to run the `claude.cmd` shim; the binary path is quoted for spaces, and the flags carry no special chars. Do NOT reintroduce a `bash`/`cat` wrapper — Git Bash's bin dir usually isn't on the server's PATH, which caused `spawn bash ENOENT`.
 5. **stdin pipe is correct in `-p` (print) mode** — pipe the prompt and call `stdin.end()` so claude reads EOF and runs. (The old "stdin must be ignore / pipe blocks forever" rule applied to interactive mode, not `-p`.)
-6. **Strip CLAUDECODE env var** from child processes — prevents nested session detection
+6. **Strip these env vars from the CC child process**: `CLAUDECODE` + `CLAUDE_CODE_ENTRYPOINT` (prevent nested-session detection) and `ANTHROPIC_API_KEY` + `ANTHROPIC_AUTH_TOKEN` (CC mode uses the CLI's subscription login — leaking the server's API key makes the CLI auth with it, so a bogus/expired/out-of-credits key breaks CC mode with "Invalid API key"). The server's API key is for API mode only.
 
 ## Architecture at a Glance
 

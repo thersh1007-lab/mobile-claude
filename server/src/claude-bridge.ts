@@ -90,9 +90,21 @@ export async function handleBridgeMessage(
   bridgeBusy = true;
   send({ type: 'status', state: 'thinking' });
 
+  // Strip these from the child env:
+  // - CLAUDECODE / CLAUDE_CODE_ENTRYPOINT: prevent nested-session detection
+  // - ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN: CC mode delegates to the user's
+  //   logged-in `claude` CLI (subscription auth). The server's API key is for API
+  //   mode only — leaking it here makes the CLI try to auth with it, so a bogus,
+  //   expired, or out-of-credits key would break CC mode with "Invalid API key".
+  const STRIP_FROM_CHILD = new Set([
+    'CLAUDECODE',
+    'CLAUDE_CODE_ENTRYPOINT',
+    'ANTHROPIC_API_KEY',
+    'ANTHROPIC_AUTH_TOKEN',
+  ]);
   const cleanEnv: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
-    if (k === 'CLAUDECODE' || k === 'CLAUDE_CODE_ENTRYPOINT') continue;
+    if (STRIP_FROM_CHILD.has(k)) continue;
     if (v !== undefined) cleanEnv[k] = v;
   }
 
