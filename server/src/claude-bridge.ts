@@ -86,7 +86,7 @@ export async function handleBridgeMessage(
   userMessage: string,
   cwd: string,
   send: SendFn,
-): Promise<void> {
+): Promise<string> {
   bridgeBusy = true;
   send({ type: 'status', state: 'thinking' });
 
@@ -115,7 +115,7 @@ export async function handleBridgeMessage(
   // Record the user message in history
   bridgeHistory.push({ role: 'user', content: userMessage });
 
-  return new Promise<void>((resolve) => {
+  return new Promise<string>((resolve) => {
     // Spawn the claude CLI directly and feed the prompt via stdin. This avoids the
     // Windows command-line escaping problem (the reason a bash wrapper was used before)
     // AND the hard dependency on bash being resolvable on PATH — Git Bash's bin dir is
@@ -236,7 +236,7 @@ export async function handleBridgeMessage(
       sendAndBuffer({ type: 'status', state: 'idle' });
       pendingResponse = buffer;
       bridgeBusy = false;
-      resolve();
+      resolve('');
     });
 
     proc.on('close', (code) => {
@@ -292,7 +292,17 @@ export async function handleBridgeMessage(
         console.log(`[Bridge] Complete (buffered ${buffer.length} messages for reconnect)`);
       }
       bridgeBusy = false;
-      resolve();
+      resolve(fullText);
     });
   });
+}
+
+// Rebuild bridge memory from a conversation's saved messages. Called when the user
+// switches to a different conversation so Claude Code carries that conversation's
+// context (not whatever was last active globally).
+export function loadBridgeHistory(entries: Array<{ role: 'user' | 'assistant'; content: string }>): void {
+  bridgeHistory = entries.map(e => ({ role: e.role, content: e.content }));
+  while (bridgeHistory.length > MAX_BRIDGE_HISTORY * 2) {
+    bridgeHistory.shift();
+  }
 }

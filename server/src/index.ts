@@ -113,6 +113,20 @@ function getLocalIP(): string {
   return lan || candidates[0] || 'localhost';
 }
 
+// Detect a Tailscale address (CGNAT range 100.64.0.0/10) so we can print a
+// pair-from-anywhere URL.
+function getTailscaleIP(): string | null {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name] || []) {
+      if (iface.family !== 'IPv4' || iface.internal) continue;
+      const m = iface.address.match(/^100\.(\d+)\./);
+      if (m && +m[1] >= 64 && +m[1] <= 127) return iface.address;
+    }
+  }
+  return null;
+}
+
 const PORT = parseInt(process.env.PORT || '3456', 10);
 const AUTH_TOKEN_INITIAL = process.env.AUTH_TOKEN || 'change-this';
 
@@ -454,7 +468,15 @@ server.listen(PORT, '0.0.0.0', () => {
 });
 
 function printStartupBanner(ip: string, httpUrl: string, httpsUrl: string | null) {
-  const qrUrl = httpsUrl || httpUrl;
+  // Embed the auth token in a URL hash so scanning/opening it auto-pairs the
+  // device — each origin has its own localStorage, so a new URL otherwise starts
+  // with no token and is rejected. The hash is read + stripped client-side.
+  const token = getAuthToken();
+  const pair = (u: string) => `${u}/#token=${token}`;
+  const baseUrl = httpsUrl || httpUrl;
+  const qrUrl = pair(baseUrl);
+  const tsIp = getTailscaleIP();
+  const tsUrl = tsIp ? (httpsUrl ? `https://${tsIp}:${HTTPS_PORT}` : `http://${tsIp}:${PORT}`) : null;
 
   console.log('');
   console.log('  Mobile Claude server running');
@@ -466,6 +488,9 @@ function printStartupBanner(ip: string, httpUrl: string, httpsUrl: string | null
     console.log(`  WSS:       wss://${ip}:${HTTPS_PORT}`);
   }
   console.log(`  WS:        ws://${ip}:${PORT}`);
+  if (tsUrl) {
+    console.log(`  Tailscale: ${tsUrl}  (works from anywhere)`);
+  }
   console.log(`  Platform:  ${process.platform} (${os.arch()})`);
   console.log(`  Workspace: ${getWorkspaceRoot()}`);
   if (httpsUrl) {
@@ -477,10 +502,15 @@ function printStartupBanner(ip: string, httpUrl: string, httpsUrl: string | null
     console.log('  Install OpenSSL (or Git for Windows) and restart to enable HTTPS.');
   }
   console.log('');
-  console.log('  Scan this QR code on your phone:');
+  console.log('  Scan this QR to pair (the token is included — no manual entry):');
   console.log('');
   qrcode.generate(qrUrl, { small: true }, (code: string) => {
     console.log(code.split('\n').map((line: string) => '  ' + line).join('\n'));
+    console.log('');
+    console.log('  Pairing links (open once on a new device to auto-connect):');
+    console.log(`    LAN:       ${pair(httpUrl)}`);
+    if (httpsUrl) console.log(`    LAN HTTPS: ${pair(httpsUrl)}`);
+    if (tsUrl) console.log(`    Tailscale: ${pair(tsUrl)}`);
     console.log('');
   });
 }

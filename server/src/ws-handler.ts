@@ -5,7 +5,7 @@ import { ClientMessage, ServerMessage } from './types';
 import { handleConversation } from './anthropic';
 import { setWorkspaceRoot, getWorkspaceRoot, isAllowedWorkspace } from './tools';
 import { processVoiceMemo } from './voice-blog';
-import { handleBridgeMessage, resetBridgeSession, deliverPendingResponse, isBridgeBusy } from './claude-bridge';
+import { handleBridgeMessage, resetBridgeSession, deliverPendingResponse, isBridgeBusy, loadBridgeHistory } from './claude-bridge';
 import { transcribeAudio } from './transcribe';
 import { auditLog } from './audit';
 import { createConversation, addMessage, listConversations, loadConversation, Conversation } from './history';
@@ -184,7 +184,10 @@ export function handleConnection(ws: WebSocket): void {
             return;
           }
           // Claude Code Bridge — use module-level send so reconnects don't lose output
-          await handleBridgeMessage(msg.content, getWorkspaceRoot(), sendToActive);
+          const bridgeText = await handleBridgeMessage(msg.content, getWorkspaceRoot(), sendToActive);
+          if (bridgeText && currentConversation) {
+            addMessage(currentConversation, 'assistant', bridgeText);
+          }
         } else {
           // Direct API mode — use sendToActive so responses survive reconnects
           conversationHistory.push({ role: 'user', content: msg.content });
@@ -352,7 +355,10 @@ export function handleConnection(ws: WebSocket): void {
             processing = false;
             return;
           }
-          await handleBridgeMessage(text, getWorkspaceRoot(), sendToActive);
+          const bridgeText = await handleBridgeMessage(text, getWorkspaceRoot(), sendToActive);
+          if (bridgeText && currentConversation) {
+            addMessage(currentConversation, 'assistant', bridgeText);
+          }
         } else {
           conversationHistory.push({ role: 'user', content: text });
           await handleConversation(conversationHistory, sendToActive, waitForApproval);
@@ -442,6 +448,8 @@ export function handleConnection(ws: WebSocket): void {
         while (conversationHistory.length > MAX_HISTORY_MESSAGES) {
           conversationHistory.shift();
         }
+        // Restore Claude Code memory from the imported session too.
+        loadBridgeHistory(conv.messages);
         send({
           type: 'session_imported',
           conversation: {
@@ -468,11 +476,17 @@ export function handleConnection(ws: WebSocket): void {
       const conv = loadConversation(msg.id);
       if (conv) {
         currentConversation = conv;
+        // Switch to the conversation's mode so CC convos resume in CC, API in API.
+        if (conv.mode === 'direct' || conv.mode === 'bridge') {
+          currentMode = conv.mode;
+        }
         // Restore API conversation history from persistent storage
         conversationHistory.length = 0;
         for (const entry of conv.messages) {
           conversationHistory.push({ role: entry.role, content: entry.content });
         }
+        // Restore Claude Code memory so CC carries this conversation's context.
+        loadBridgeHistory(conv.messages);
         send({ type: 'conversation_loaded', conversation: conv });
       } else {
         send({ type: 'error', message: 'Conversation not found' });

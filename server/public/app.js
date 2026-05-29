@@ -868,6 +868,12 @@ function connect() {
         // Display imported conversation messages
         msgContainer.innerHTML = '';
         const conv = msg.conversation;
+        // Match the toggle to the loaded conversation's mode (CC vs API).
+        if (conv.mode === 'direct' || conv.mode === 'bridge') {
+          currentMode = conv.mode;
+          localStorage.setItem('mc_mode', currentMode);
+          updateModeUI();
+        }
         for (const m of conv.messages || []) {
           if (m.role === 'user') {
             const div = document.createElement('div');
@@ -1430,6 +1436,24 @@ function initOnboarding(statusData) {
     connect();
   });
 }
+
+// Device pairing via URL hash: opening a link like https://host:port/#token=XXX
+// (e.g. from the startup QR or a "copy pairing link") drops the auth token into
+// THIS origin's localStorage, so a new device/URL connects without manual entry.
+// localStorage is per-origin, which is why a fresh HTTPS/Tailscale URL otherwise
+// starts with no token. We read it, store it, and strip the hash from the address.
+(function pairFromHash() {
+  if (!location.hash) return;
+  const params = new URLSearchParams(location.hash.slice(1));
+  const t = params.get('token');
+  const u = params.get('url');
+  let changed = false;
+  if (t) { authToken = t; localStorage.setItem('mc_token', t); changed = true; }
+  if (u) { serverUrl = u; localStorage.setItem('mc_url', u); changed = true; }
+  if (changed) {
+    history.replaceState(null, '', location.pathname + location.search);
+  }
+})();
 
 // Auto-connect (with setup check)
 checkSetupAndConnect();
