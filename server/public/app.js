@@ -608,14 +608,29 @@ window.toolDecision = function(id, approved) {
   }
 };
 
+let pendingMessages = []; // chat messages typed while offline; flushed on reconnect
+
 function sendMessage() {
   const text = input.value.trim();
-  if (!text || !connected) return;
+  if (!text) return;
   addUserMsg(text);
-  ws.send(JSON.stringify({ type: 'message', content: text, token: authToken }));
+  const payload = JSON.stringify({ type: 'message', content: text, token: authToken });
+  if (connected && ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(payload);
+  } else {
+    pendingMessages.push(payload);
+    addSystemMsg('Offline — message queued, will send when reconnected.');
+  }
   input.value = '';
   input.style.height = 'auto';
   sendBtn.disabled = true;
+}
+
+function flushPendingMessages() {
+  if (!connected || !ws || ws.readyState !== WebSocket.OPEN) return;
+  while (pendingMessages.length) {
+    ws.send(pendingMessages.shift());
+  }
 }
 
 // Workspace selector
@@ -661,6 +676,13 @@ document.addEventListener('visibilitychange', () => {
 });
 window.addEventListener('online', reconnectNow);
 
+// Fetch helper that sends the auth token in an Authorization header instead of a
+// URL query string, so it doesn't leak into server logs, proxies, or browser history.
+function authFetch(url, opts = {}) {
+  const headers = Object.assign({}, opts.headers, { 'Authorization': 'Bearer ' + authToken });
+  return fetch(url, Object.assign({}, opts, { headers }));
+}
+
 function connect() {
   // Don't tear down a healthy or in-progress socket. Without this guard, a stray
   // connect() (e.g. from reconnectNow on visibility/online, or a stale reconnect
@@ -689,12 +711,15 @@ function connect() {
     requestWorkspaces();
     updateModeUI();
     ws.send(JSON.stringify({ type: 'set_mode', mode: currentMode, token: authToken }));
+    flushPendingMessages(); // send anything queued while we were offline
     showDashboard();
   };
 
   ws.onclose = (e) => {
     connected = false;
-    sendBtn.disabled = true;
+    // Keep the send button usable while offline so messages can be queued
+    // (sendMessage() queues them and flushPendingMessages() sends on reconnect).
+    sendBtn.disabled = !input.value.trim();
     wsSelect.disabled = true;
     // Smart reconnect with exponential backoff
     reconnectAttempts++;
@@ -900,15 +925,15 @@ function updateCostDisplay() {
     costEl = document.createElement('span');
     costEl.id = 'cost-display';
     costEl.style.cssText = 'color:var(--text-muted);font-size:calc(10px * var(--zoom));cursor:pointer;white-space:nowrap';
-    costEl.title = 'Session API cost';
+    costEl.title = 'Estimated API-equivalent cost this session. Not billed per message on a Claude subscription.';
     costEl.addEventListener('click', () => {
       const elapsed = Math.floor((Date.now() - sessionStartTime) / 60000);
-      addSystemMsg(`Session: $${sessionCost.toFixed(4)} | ${elapsed}min`);
+      addSystemMsg(`Session: ~$${sessionCost.toFixed(4)} (est. API-equivalent) | ${elapsed}min`);
     });
     const statusBar = document.getElementById('status-bar');
     if (statusBar) statusBar.insertBefore(costEl, statusBar.querySelector('.bar-btn'));
   }
-  costEl.textContent = sessionCost > 0 ? `$${sessionCost.toFixed(4)}` : '';
+  costEl.textContent = sessionCost > 0 ? `~$${sessionCost.toFixed(4)}` : '';
 }
 
 // ── Conversation Persistence ──
@@ -994,18 +1019,31 @@ async function showDashboard() {
       const healthResp = await fetch(`${httpUrl}/health`);
       const health = await healthResp.json();
       if (health.version && health.version !== CLIENT_VERSION) {
-        console.log('Version mismatch: client=' + CLIENT_VERSION + ' server=' + health.version + ' — reloading');
-        // Clear SW cache and reload
-        if ('caches' in window) {
-          const keys = await caches.keys();
-          for (const k of keys) await caches.delete(k);
+        // Reload at most ONCE per server version. If we already reloaded for this
+        // version and still see a mismatch, the cache/SW is stuck — stop reloading
+        // so we don't trap the user in a refresh loop.
+        if (sessionStorage.getItem('mc_reloaded_for') === String(health.version)) {
+          console.warn('Version still mismatched after reload (client=' + CLIENT_VERSION + ', server=' + health.version + '). Skipping further reloads — clear site data to update.');
+        } else {
+          console.log('Version mismatch: client=' + CLIENT_VERSION + ' server=' + health.version + ' — clearing SW + caches and reloading once');
+          sessionStorage.setItem('mc_reloaded_for', String(health.version));
+          try {
+            if ('serviceWorker' in navigator) {
+              const regs = await navigator.serviceWorker.getRegistrations();
+              await Promise.all(regs.map(r => r.unregister()));
+            }
+            if ('caches' in window) {
+              const keys = await caches.keys();
+              await Promise.all(keys.map(k => caches.delete(k)));
+            }
+          } catch (e) { /* best effort */ }
+          window.location.reload();
+          return;
         }
-        window.location.reload(true);
-        return;
       }
     } catch(e) { /* offline or health failed, continue */ }
 
-    const resp = await fetch(`${httpUrl}/api/dashboard?token=${encodeURIComponent(authToken)}`);
+    const resp = await authFetch(`${httpUrl}/api/dashboard`);
     if (!resp.ok) return;
     const data = await resp.json();
     // Replace any existing dashboard card — showDashboard() runs on every (re)connect,
@@ -1045,7 +1083,7 @@ let fdViewingFile = null;
 async function fdNavigate(relPath) {
   const httpUrl = location.origin;
   try {
-    const resp = await fetch(`${httpUrl}/api/files?token=${encodeURIComponent(authToken)}&path=${encodeURIComponent(relPath)}`);
+    const resp = await authFetch(`${httpUrl}/api/files?path=${encodeURIComponent(relPath)}`);
     if (!resp.ok) throw new Error('Failed to load');
     const data = await resp.json();
     const content = document.getElementById('file-drawer-content');
@@ -1110,7 +1148,7 @@ function loadHistory() {
   list.innerHTML = '<div style="color:var(--text-muted);text-align:center;padding:20px">Loading...</div>';
 
   const httpUrl = location.origin || serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
-  fetch(httpUrl + '/api/conversations?token=' + encodeURIComponent(authToken))
+  authFetch(httpUrl + '/api/conversations')
     .then(r => r.json())
     .then(d => {
       const convs = d.conversations || [];
@@ -1156,7 +1194,7 @@ function loadSessions() {
   } else {
     // Fallback: try REST API
     const httpUrl = serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
-    fetch(httpUrl.replace(/\/$/, '') + '/api/sessions?token=' + encodeURIComponent(authToken))
+    authFetch(httpUrl.replace(/\/$/, '') + '/api/sessions')
       .then(r => r.json())
       .then(d => renderSessionsList(d.sessions))
       .catch(() => {

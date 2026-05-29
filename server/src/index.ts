@@ -23,6 +23,25 @@ import qrcode from 'qrcode-terminal';
  * Tries openssl first (available on most systems via Git for Windows).
  * Returns { key, cert } strings or null if generation fails.
  */
+// Resolve an openssl binary. On Windows it's rarely on PATH, but Git for Windows
+// bundles one — same PATH gap that broke the bash spawn. Returns the full path so
+// HTTPS cert generation works out of the box wherever Git is installed.
+function findOpenSSL(): string {
+  try {
+    execSync(process.platform === 'win32' ? 'where openssl' : 'which openssl', { stdio: 'pipe', timeout: 5000 });
+    return 'openssl';
+  } catch { /* not on PATH — look for Git's bundled copy */ }
+  const candidates = [
+    'C:/Program Files/Git/usr/bin/openssl.exe',
+    'C:/Program Files/Git/mingw64/bin/openssl.exe',
+    'C:/Program Files (x86)/Git/usr/bin/openssl.exe',
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  return 'openssl'; // fall back; ensureCerts() handles failure gracefully
+}
+
 function ensureCerts(): { key: string; cert: string } | null {
   const certsDir = path.join(__dirname, '..', 'certs');
   const keyPath = path.join(certsDir, 'server.key');
@@ -53,7 +72,7 @@ function ensureCerts(): { key: string; cert: string } | null {
   try {
     const subj = '/CN=mobile-claude';
     const cmd = [
-      'openssl', 'req', '-x509',
+      `"${findOpenSSL()}"`, 'req', '-x509',
       '-newkey', 'rsa:2048',
       '-keyout', keyPath.replace(/\\/g, '/'),
       '-out', certPath.replace(/\\/g, '/'),
@@ -160,26 +179,40 @@ app.get('/clear-cache', (_req, res) => {
 </script></body></html>`);
 });
 
-// Project dashboard — quick snapshot of current workspace
+// Project dashboard — quick snapshot of current workspace.
+// The git commands can be slow on a large monorepo, and the client requests this
+// on every (re)connect — so cache the git result briefly per workspace root.
+interface GitSnapshot { branch: string; status: string; recentCommits: string; }
+let gitCache: { root: string; at: number; git: GitSnapshot } | null = null;
+const DASHBOARD_TTL_MS = 30_000;
+
 app.get('/api/dashboard', requireAuth, (_req, res) => {
   const root = getWorkspaceRoot();
   const name = path.basename(root);
-  let gitBranch = '';
-  let gitStatus = '';
-  let gitLog = '';
-  // stdio: pipe stderr to this process (captured, not inherited) so git warnings
-  // like "could not open directory ...: Permission denied" don't spam the console.
-  const gitOpts: ExecSyncOptionsWithStringEncoding = { cwd: root, encoding: 'utf-8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] };
-  try {
-    gitBranch = execSync('git branch --show-current', gitOpts).trim();
-    gitStatus = execSync('git status --short', gitOpts).trim();
-    gitLog = execSync('git log --oneline -5', gitOpts).trim();
-  } catch { /* not a git repo */ }
+
+  let git: GitSnapshot;
+  if (gitCache && gitCache.root === root && Date.now() - gitCache.at < DASHBOARD_TTL_MS) {
+    git = gitCache.git;
+  } else {
+    let branch = '';
+    let status = '';
+    let recentCommits = '';
+    // stdio: capture stderr (don't inherit) so git warnings like
+    // "could not open directory ...: Permission denied" never reach the console.
+    const gitOpts: ExecSyncOptionsWithStringEncoding = { cwd: root, encoding: 'utf-8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] };
+    try {
+      branch = execSync('git branch --show-current', gitOpts).trim();
+      status = execSync('git status --short', gitOpts).trim();
+      recentCommits = execSync('git log --oneline -5', gitOpts).trim();
+    } catch { /* not a git repo */ }
+    git = { branch, status, recentCommits };
+    gitCache = { root, at: Date.now(), git };
+  }
 
   res.json({
     workspace: name,
     path: root,
-    git: { branch: gitBranch, status: gitStatus, recentCommits: gitLog },
+    git,
     uptime: Math.floor(process.uptime()),
   });
 });

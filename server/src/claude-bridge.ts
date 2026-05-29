@@ -26,7 +26,7 @@ interface BridgeExchange {
 }
 
 let bridgeHistory: BridgeExchange[] = [];
-const MAX_BRIDGE_HISTORY = 20; // max exchanges to include in prompt
+const MAX_BRIDGE_HISTORY = 12; // max exchanges to include in prompt (lower = cheaper per turn)
 
 export function resetBridgeSession(): void {
   bridgeBusy = false;
@@ -68,8 +68,8 @@ function buildPrompt(userMessage: string, cwd: string): string {
     for (const exchange of recent) {
       const label = exchange.role === 'user' ? 'User' : 'Assistant';
       // Truncate long assistant responses to save tokens
-      const content = exchange.role === 'assistant' && exchange.content.length > 2000
-        ? exchange.content.slice(0, 2000) + '...(truncated)'
+      const content = exchange.role === 'assistant' && exchange.content.length > 1500
+        ? exchange.content.slice(0, 1500) + '...(truncated)'
         : exchange.content;
       parts.push(`${label}: ${content}`);
     }
