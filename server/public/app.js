@@ -684,6 +684,19 @@ function authFetch(url, opts = {}) {
 }
 
 function connect() {
+  // Always talk to the server that served this page: derive the socket scheme and
+  // host:port from the current location. This way opening the HTTP URL uses ws://
+  // and opening the HTTPS URL uses wss:// on the same port — an HTTPS page cannot
+  // open an insecure ws:// socket (mixed content), which otherwise looks like an
+  // endless "connecting..." with nothing reaching the server.
+  if (location.protocol === 'https:' || location.protocol === 'http:') {
+    const scheme = location.protocol === 'https:' ? 'wss://' : 'ws://';
+    const derived = scheme + location.host;
+    if (derived !== serverUrl) {
+      serverUrl = derived;
+      localStorage.setItem('mc_url', serverUrl);
+    }
+  }
   // Don't tear down a healthy or in-progress socket. Without this guard, a stray
   // connect() (e.g. from reconnectNow on visibility/online, or a stale reconnect
   // timer) closes the live socket, whose onclose schedules another reconnect,
