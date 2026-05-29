@@ -87,8 +87,8 @@ mobile-claude/
     │   │                      - Cost estimation (Sonnet pricing)
     │   │
     │   ├── claude-bridge.ts ← Claude Code Bridge mode
-    │   │                      - Writes prompt to temp file (avoids shell escaping)
-    │   │                      - Spawns: bash -c 'claude -p "$(cat tmpfile)" --output-format stream-json'
+    │   │                      - Spawns: claude -p --output-format stream-json (shell:true for the .cmd shim)
+    │   │                      - Prompt fed via stdin (avoids shell escaping; no temp file, no bash)
     │   │                      - NDJSON streaming — text deltas forwarded in real-time
     │   │                      - Conversation memory (last 20 exchanges in prompt)
     │   │                      - Wraps user message with system instructions
@@ -236,8 +236,8 @@ mobile-claude/
 
 ## Key Technical Decisions & Gotchas
 
-### Bridge Mode — Temp File for Prompt
-Windows `cmd.exe` mangles quotes and special characters when passing long strings via `spawn()` with `shell: true`. The bridge writes the prompt to a temp file and uses `bash -c 'claude -p "$(cat /tmp/file)"'` to pass it cleanly. This is the ONLY reliable way on Windows.
+### Bridge Mode — Prompt via stdin (no bash)
+Windows `cmd.exe` mangles quotes and special characters when a long prompt is passed via `spawn()` args, so the prompt must never touch the command line. The bridge spawns `claude -p` and writes the prompt to the child's **stdin** (then `stdin.end()` so `-p` reads EOF and runs). `shell: true` is used only to launch the `claude.cmd` shim on Windows; the binary path is quoted to tolerate spaces, and the flags carry no special chars. An earlier version wrapped this in `bash -c '... "$(cat tmpfile)"'`, but Git Bash's bin dir usually isn't on the server's PATH, so `spawn('bash')` failed with `ENOENT` (close code `-4056`). The stdin approach removes the bash dependency and is cross-platform.
 
 ### Bridge Mode — NDJSON Streaming
 The bridge uses `--output-format stream-json` to get NDJSON events from the CLI. stdout is split on newlines and each line parsed as JSON. Key event types: `assistant` (contains message content blocks), `content_block_delta` (streaming text deltas), `result` (final cost/status). Text is forwarded to the client as `text_delta` messages as it arrives. A line buffer handles partial lines from chunked stdout reads.
@@ -251,8 +251,8 @@ Each CC mode message is standalone (`-p` mode). We tried `--resume` with session
 ### Bridge Mode — Response Buffering
 Phone connections drop frequently (screen lock, network switch). When the bridge response arrives and the phone is disconnected, messages are buffered in `pendingResponse` and replayed on reconnect via `deliverPendingResponse()`. Buffer is cleared after successful delivery to avoid stale replays.
 
-### stdin Must Be 'ignore'
-When spawning `claude`, stdin MUST be `'ignore'`. If it's `'pipe'` (Node.js default), Claude Code blocks forever waiting for interactive input.
+### stdin: 'pipe' in print mode, 'ignore' in interactive
+In `-p` (print) mode the bridge sets stdin to `'pipe'`, writes the prompt, and calls `stdin.end()` — claude reads the prompt from stdin and exits cleanly. The "stdin must be 'ignore' or it blocks forever" rule applies to **interactive** mode (no `-p`): there, a piped-but-never-closed stdin makes Claude Code wait forever for input.
 
 ### CLAUDECODE Env Var Stripping
 If the server runs inside a Claude Code session, `CLAUDECODE=1` is inherited. The bridge strips `CLAUDECODE` and `CLAUDE_CODE_ENTRYPOINT` from the child env to prevent nested session detection.
