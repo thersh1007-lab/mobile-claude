@@ -648,6 +648,19 @@ function requestWorkspaces() {
   }
 }
 
+// When the phone wakes from lock/background or the network comes back, reconnect
+// immediately instead of waiting out the exponential backoff (up to 30s).
+function reconnectNow() {
+  if (connected) return;
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  reconnectAttempts = 0;
+  connect();
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') reconnectNow();
+});
+window.addEventListener('online', reconnectNow);
+
 function connect() {
   if (ws) { ws.close(); ws = null; }
   if (!serverUrl) {

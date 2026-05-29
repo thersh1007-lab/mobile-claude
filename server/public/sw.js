@@ -1,4 +1,4 @@
-const CACHE_NAME = 'mobile-claude-v6';
+const CACHE_NAME = 'mobile-claude-v7';
 const PRECACHE = [
   '/',
   '/styles.css',

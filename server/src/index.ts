@@ -8,10 +8,10 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import crypto from 'crypto';
-import { execSync } from 'child_process';
+import { execSync, ExecSyncOptionsWithStringEncoding } from 'child_process';
 import { WebSocketServer } from 'ws';
 import { handleConnection } from './ws-handler';
-import { getWorkspaceRoot } from './tools';
+import { getWorkspaceRoot, setWorkspaceRoot } from './tools';
 import { listClaudeCodeSessions, importSession } from './session-import';
 import { listConversations } from './history';
 
@@ -167,10 +167,13 @@ app.get('/api/dashboard', requireAuth, (_req, res) => {
   let gitBranch = '';
   let gitStatus = '';
   let gitLog = '';
+  // stdio: pipe stderr to this process (captured, not inherited) so git warnings
+  // like "could not open directory ...: Permission denied" don't spam the console.
+  const gitOpts: ExecSyncOptionsWithStringEncoding = { cwd: root, encoding: 'utf-8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] };
   try {
-    gitBranch = execSync('git branch --show-current', { cwd: root, encoding: 'utf-8', timeout: 5000 }).trim();
-    gitStatus = execSync('git status --short', { cwd: root, encoding: 'utf-8', timeout: 5000 }).trim();
-    gitLog = execSync('git log --oneline -5', { cwd: root, encoding: 'utf-8', timeout: 5000 }).trim();
+    gitBranch = execSync('git branch --show-current', gitOpts).trim();
+    gitStatus = execSync('git status --short', gitOpts).trim();
+    gitLog = execSync('git log --oneline -5', gitOpts).trim();
   } catch { /* not a git repo */ }
 
   res.json({
@@ -273,10 +276,11 @@ app.post('/api/setup/configure', (req, res) => {
   const ip = getLocalIP();
 
   // Build .env content
+  const workspaceRoot = process.env.WORKSPACE_ROOT || path.resolve(os.homedir(), 'Documents', 'github');
   let envContent = `ANTHROPIC_API_KEY=${apiKey}\n`;
   envContent += `AUTH_TOKEN=${token}\n`;
   envContent += `PORT=${PORT}\n`;
-  envContent += `WORKSPACE_ROOT=${process.env.WORKSPACE_ROOT || path.resolve(os.homedir(), 'Documents', 'github')}\n`;
+  envContent += `WORKSPACE_ROOT=${workspaceRoot}\n`;
   if (openaiKey && typeof openaiKey === 'string' && openaiKey.startsWith('sk-')) {
     envContent += `OPENAI_API_KEY=${openaiKey}\n`;
   }
@@ -285,6 +289,9 @@ app.post('/api/setup/configure', (req, res) => {
     fs.writeFileSync(envPath, envContent, 'utf-8');
     // Update the in-memory AUTH_TOKEN so the new token works immediately
     (global as any).__AUTH_TOKEN_OVERRIDE = token;
+    // Adopt the configured workspace root now, so the running server doesn't
+    // keep using whatever it auto-detected at boot (before .env existed).
+    setWorkspaceRoot(workspaceRoot);
     console.log('[Setup] .env written successfully. New auth token generated.');
     res.json({
       token,
@@ -334,23 +341,26 @@ app.get('/api/conversations', requireAuth, (_req, res) => {
 function setupWebSocketServer(wss: WebSocketServer, label: string): NodeJS.Timeout {
   wss.on('connection', (ws) => {
     console.log(`[${label}] New connection from client`);
-    (ws as any).isAlive = true;
+    (ws as any).missedPings = 0;
 
     ws.on('pong', () => {
-      (ws as any).isAlive = true;
+      (ws as any).missedPings = 0;
     });
 
     handleConnection(ws);
   });
 
-  // Ping all clients every 25s to keep connections alive
+  // Ping all clients every 25s. Tolerate up to 2 missed pongs (~75s) before
+  // terminating, so a phone that briefly locks or backgrounds isn't dropped on a
+  // single missed beat (which used to cause constant disconnect/reconnect churn).
   const interval = setInterval(() => {
     wss.clients.forEach((ws) => {
-      if ((ws as any).isAlive === false) {
-        console.log(`[${label}] Terminating dead connection`);
+      const missed = ((ws as any).missedPings || 0) + 1;
+      (ws as any).missedPings = missed;
+      if (missed > 2) {
+        console.log(`[${label}] Terminating dead connection (no pong for ${missed} pings)`);
         return ws.terminate();
       }
-      (ws as any).isAlive = false;
       ws.ping();
     });
   }, 25000);

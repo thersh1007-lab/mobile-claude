@@ -1,17 +1,29 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import { execSync, spawnSync } from 'child_process';
 import { ToolResult } from './types';
 import { auditLog } from './audit';
 
-// Auto-detect workspace: WORKSPACE_ROOT env > git repo root > cwd
+// Auto-detect workspace: WORKSPACE_ROOT env > git repo root > ~/Documents/github > cwd.
+// Never fall back to the bare home dir — `git status` there walks the whole user
+// profile (Application Data, Cookies, NetHood, ...), which is slow and spams warnings.
 function detectWorkspace(): string {
+  const home = path.resolve(os.homedir());
+  const isHome = (p: string) => path.resolve(p) === home;
+
   if (process.env.WORKSPACE_ROOT) return process.env.WORKSPACE_ROOT;
   try {
     const gitRoot = execSync('git rev-parse --show-toplevel', { encoding: 'utf-8', timeout: 3000 }).trim();
-    if (gitRoot) return path.dirname(gitRoot); // Parent of the git repo (so siblings are accessible)
+    if (gitRoot) {
+      const parent = path.dirname(gitRoot); // parent of the git repo, so siblings are accessible
+      return isHome(parent) ? gitRoot : parent; // but never the bare home dir
+    }
   } catch {}
-  return process.cwd();
+  const docsGithub = path.join(home, 'Documents', 'github');
+  if (fs.existsSync(docsGithub)) return docsGithub;
+  const cwd = process.cwd();
+  return isHome(cwd) ? docsGithub : cwd;
 }
 
 let WORKSPACE_ROOT = detectWorkspace();
