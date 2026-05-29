@@ -21,8 +21,8 @@ Mobile Claude is a self-hosted mobile web app for chatting with Claude AI from y
 1. **Never commit `.env` or `secret.txt`** — they contain API keys
 2. **Always build (`npx tsc`) before testing changes** — the server runs from `dist/`
 3. **Test bridge changes from CLI first**: `claude -p "test prompt" --output-format json --dangerously-skip-permissions --max-turns 3`
-4. **Windows shell escaping breaks bridge mode** — the bridge writes prompts to temp files and uses `bash -c 'cat file'` to avoid this. Do NOT try to pass long strings via `spawn()` args with `shell: true` on Windows.
-5. **stdin must be 'ignore' when spawning claude** — `'pipe'` causes Claude Code to block forever
+4. **Never put the prompt on the command line** — Windows shell escaping breaks bridge mode. The bridge spawns `claude -p` and feeds the prompt via **stdin** (then `stdin.end()`), so the prompt never touches the command line. `shell: true` is used only to run the `claude.cmd` shim; the binary path is quoted for spaces, and the flags carry no special chars. Do NOT reintroduce a `bash`/`cat` wrapper — Git Bash's bin dir usually isn't on the server's PATH, which caused `spawn bash ENOENT`.
+5. **stdin pipe is correct in `-p` (print) mode** — pipe the prompt and call `stdin.end()` so claude reads EOF and runs. (The old "stdin must be ignore / pipe blocks forever" rule applied to interactive mode, not `-p`.)
 6. **Strip CLAUDECODE env var** from child processes — prevents nested session detection
 
 ## Architecture at a Glance

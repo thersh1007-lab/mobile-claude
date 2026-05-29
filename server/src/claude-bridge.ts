@@ -1,7 +1,4 @@
 import { spawn, execSync } from 'child_process';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
 import { ServerMessage } from './types';
 
 // Auto-detect claude CLI path at module load
@@ -101,28 +98,31 @@ export async function handleBridgeMessage(
 
   const wrappedMessage = buildPrompt(userMessage, cwd);
 
-  // Write prompt to temp file to avoid shell escaping issues
-  const tmpFile = path.join(os.tmpdir(), `mc-prompt-${Date.now()}.txt`);
-  fs.writeFileSync(tmpFile, wrappedMessage, 'utf-8');
-  const tmpUnix = tmpFile.replace(/\\/g, '/');
-
   console.log(`[Bridge] Spawning in ${cwd} | prompt: ${userMessage.slice(0, 80)} | history: ${bridgeHistory.length} exchanges`);
 
   // Record the user message in history
   bridgeHistory.push({ role: 'user', content: userMessage });
 
   return new Promise<void>((resolve) => {
-    // Use bash to cat the prompt from temp file — avoids shell escaping on all platforms
-    const claudeBin = CLAUDE_BIN.replace(/\\/g, '/');
-    const proc = spawn('bash', [
-      '-c',
-      `"${claudeBin}" -p "$(cat "${tmpUnix}")" --output-format stream-json --verbose --dangerously-skip-permissions --max-turns 10`,
-    ], {
+    // Spawn the claude CLI directly and feed the prompt via stdin. This avoids the
+    // Windows command-line escaping problem (the reason a bash wrapper was used before)
+    // AND the hard dependency on bash being resolvable on PATH — Git Bash's bin dir is
+    // usually NOT on the server's PATH, which made spawn('bash') fail with ENOENT.
+    // shell:true runs the claude.cmd shim on Windows; the quoted path tolerates spaces;
+    // the flags carry no special chars; the prompt never touches the command line.
+    const cmdString = `"${CLAUDE_BIN}" -p --output-format stream-json --verbose --dangerously-skip-permissions --max-turns 10`;
+    const proc = spawn(cmdString, {
+      shell: true,
       cwd,
       env: cleanEnv,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
       ...(process.platform === 'win32' ? { windowsHide: true } : {}),
     });
+
+    // Feed the prompt via stdin (no shell escaping), then close stdin so that
+    // `claude -p` reads EOF and starts working.
+    proc.stdin.write(wrappedMessage);
+    proc.stdin.end();
 
     let stderr = '';
     let fullText = '';
@@ -219,7 +219,6 @@ export async function handleBridgeMessage(
     });
 
     proc.on('error', (err) => {
-      try { fs.unlinkSync(tmpFile); } catch {}
       console.error(`[Bridge] Spawn error: ${err.message}`);
       sendAndBuffer({ type: 'error', message: `Failed to start Claude Code: ${err.message}` });
       sendAndBuffer({ type: 'status', state: 'idle' });
@@ -229,8 +228,6 @@ export async function handleBridgeMessage(
     });
 
     proc.on('close', (code) => {
-      try { fs.unlinkSync(tmpFile); } catch {}
-
       // Process any remaining data in the line buffer
       if (lineBuffer.trim()) {
         try {
