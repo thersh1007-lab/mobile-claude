@@ -662,7 +662,14 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('online', reconnectNow);
 
 function connect() {
-  if (ws) { ws.close(); ws = null; }
+  // Don't tear down a healthy or in-progress socket. Without this guard, a stray
+  // connect() (e.g. from reconnectNow on visibility/online, or a stale reconnect
+  // timer) closes the live socket, whose onclose schedules another reconnect,
+  // producing a permanent connect/disconnect flap every couple seconds.
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+    return;
+  }
+  if (ws) { try { ws.close(); } catch (e) {} ws = null; }
   if (!serverUrl) {
     settingsModal.classList.add('open');
     return;
@@ -674,6 +681,8 @@ function connect() {
   ws.onopen = () => {
     connected = true;
     reconnectAttempts = 0;
+    // Cancel any pending reconnect so it can't later tear down this healthy socket.
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     setStatus('connected', 'connected');
     sendBtn.disabled = !input.value.trim();
     wsSelect.disabled = false;
