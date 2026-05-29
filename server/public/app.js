@@ -52,6 +52,7 @@ let agentState = 'idle';
 let currentMode = localStorage.getItem('mc_mode') || 'direct';
 let reconnectAttempts = 0;
 let reconnectTimer = null;
+let restoringWorkspace = false; // suppress the "Workspace:" banner on reconnect auto-restore
 const modeToggle = $('#mode-toggle');
 
 function updateModeUI() {
@@ -727,13 +728,19 @@ function connect() {
           wsSelect.appendChild(opt);
         });
         if (saved && saved !== msg.current) {
+          restoringWorkspace = true; // this set_workspace is an auto-restore, not a user action
           ws.send(JSON.stringify({ type: 'set_workspace', path: saved, token: authToken }));
         }
         break;
       }
       case 'workspace_changed': {
         wsSelect.value = msg.path;
-        addSystemMsg('Workspace: ' + msg.name);
+        // Only announce genuine user-initiated switches — not the silent restore on every reconnect
+        if (restoringWorkspace) {
+          restoringWorkspace = false;
+        } else {
+          addSystemMsg('Workspace: ' + msg.name);
+        }
         break;
       }
       case 'upload_complete': {
@@ -979,6 +986,9 @@ async function showDashboard() {
     const resp = await fetch(`${httpUrl}/api/dashboard?token=${encodeURIComponent(authToken)}`);
     if (!resp.ok) return;
     const data = await resp.json();
+    // Replace any existing dashboard card — showDashboard() runs on every (re)connect,
+    // so without this the cards stack up (one per reconnect).
+    msgContainer.querySelectorAll('.dashboard-card').forEach(c => c.remove());
     const card = document.createElement('div');
     card.className = 'dashboard-card';
     card.innerHTML = `
