@@ -6,3 +6,26 @@ data/
 certs/
 secret.txt
 *.log
+
+
+# === master wrap-up: standard ignores (auto-added) ===
+__pycache__/
+*.pyc
+.wrangler/
+**/.wrangler/
+*.bak
+*.bak-*
+*.bak.*
+*.mp4
+*.mov
+*.avi
+*.webm
+*.docx
+*.xlsx
+*.pptx
+**/.env
+*token*.txt
+**/ghl_pit.txt
+*credential*.json
+**/service-account*.json
+ga-token.json
